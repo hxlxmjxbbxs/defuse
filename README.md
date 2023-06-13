@@ -14,9 +14,10 @@ This is a Python script for performing a dictionary attack on a target URL by at
 
 ## Screenshots
 
-![Alt Text](https://github.com/hxlxmjxbbxs/defuse/blob/main/img/defuse%20%20(2).jpg?raw=true)
+![Alt Text](https://github.com/hxlxmjxbbxs/defuse/blob/main/img/defuse%20(3).jpg?raw=true)
 
-![Alt Text](https://github.com/hxlxmjxbbxs/defuse/blob/main/img/defuse%20%20(1).jpg?raw=true)
+![Alt Text](https://github.com/hxlxmjxbbxs/defuse/blob/main/img/defuse%20(4).jpg?raw=true)
+
 
 ## Prerequisites
 - Python 3.x

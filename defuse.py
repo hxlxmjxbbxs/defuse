@@ -5,7 +5,6 @@ import base64
 import argparse
 import time
 import random
-from tqdm import tqdm
 from termcolor import colored
 from tabulate import tabulate
 
@@ -63,14 +62,13 @@ def load_wordlist(wordlist):
         lines = f.readlines()
     return [line.strip() for line in lines]
 
-def dictionary_attack(url, header, wordlist, user_agents):
+def dictionary_attack(url, header, wordlist, user_agents, method):
     user_agents = load_user_agents(user_agents)
     headers = {'User-Agent': '', header: ''}
     wordlist_words = load_wordlist(wordlist)
     wordlist_length = len(wordlist_words)
 
     start_time = time.time()
-    progress_width = 40  # Width of the progress bar
 
     console = Console()
     progress = Progress(console=console, auto_refresh=False)
@@ -90,43 +88,24 @@ def dictionary_attack(url, header, wordlist, user_agents):
             headers[header] = 'Basic ' + encoded_word
 
             try:
-                response = requests.post(url, headers=headers, timeout=5)
+                # Dynamic HTTP method usage
+                response = getattr(requests, method.lower())(url, headers=headers, timeout=5)
                 elapsed_time = time.time() - start_time
-                remaining_time = elapsed_time / i * (wordlist_length - i)
+                remaining_time = format_time(elapsed_time / i * (wordlist_length - i))
                 status_code = response.status_code if response.status_code == 200 else colored(str(response.status_code), 'red')
-
-                if i % 10 == 0:
-                    progress.update(task, completed=i)
-                    percentage = f'{i} / {wordlist_length}'
-                    estimated_time = format_time(remaining_time)
-                    
-                    table = Table(show_header=True, header_style="bold magenta")
-                    table.add_column("Current password", justify="left")
-                    table.add_column("Estimated remaining time", justify="left")
-                    table.add_column("Status code", justify="left")
-                    table.add_column("Content length", justify="left")
-                    table.add_row(word + " / " + encoded_word, estimated_time, status_code, str(len(response.content)))
-                    console.clear()
-                    print_banner()
-                    console.print(table)
-                    console.print(f"Progress: {progress_bar(i, wordlist_length)} {percentage} - Estimated remaining time: {estimated_time}")
 
                 if response.status_code == 200:
                     progress.stop()
                     console.print(f"\nSuccess with: {word}")
                     return
 
-            except (RequestException, Timeout, ConnectionError):
-                pass
+            except (RequestException, Timeout, ConnectionError) as e:
+                progress.update(task, advance=1)
+                console.print(f"Request failed with error: {e}")
+                continue
 
         progress.stop()
         console.print("\nAttack finished, no successful attempts")
-
-def progress_bar(completed, total):
-    bar_length = 40
-    filled_length = int(round(bar_length * completed / total))
-    bar = "█" * filled_length + " " * (bar_length - filled_length)
-    return f"[{bar}]"
 
 if __name__ == "__main__":
     print_banner()
@@ -136,6 +115,7 @@ if __name__ == "__main__":
     parser.add_argument('-H', '--header', help='Header to attack')
     parser.add_argument('-w', '--wordlist', help='Wordlist file to use')
     parser.add_argument('-a', '--user_agents', help='User-agent list file to use')
+    parser.add_argument('-m', '--method', help='HTTP method to use', choices=['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH'], default='GET')
 
     args = parser.parse_args()
 
@@ -147,12 +127,10 @@ if __name__ == "__main__":
 
     while True:
         try:
-            dictionary_attack(args.url, args.header, args.wordlist, args.user_agents)
+            dictionary_attack(args.url, args.header, args.wordlist, args.user_agents, args.method)
         except KeyboardInterrupt:
             confirmation = input("\nAre you sure you want to exit? Y/n ")
             if confirmation.lower() != 'n':
                 print("Exiting the program.")
                 sys.exit(0)
             print("Canceling the exit. Resuming the attack...")
-        else:
-            break
